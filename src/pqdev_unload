@@ -1,0 +1,11 @@
+#!/bin/sh
+module="pqdev"
+device="pqdev"
+
+# Invoke rmmod with all arguments we got on command line
+/sbin/rmmod $module $* || exit 1
+
+# Remove minor nodes (hard-coded -> it is critical because of remove)
+rm -f /dev/pqdev*
+
+exit 0

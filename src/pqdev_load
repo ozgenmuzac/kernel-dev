@@ -1,0 +1,45 @@
+#!/bin/sh
+module="pqdev"
+device="pqdev"
+mode="664"
+
+# Group: since distributions do it differently, look for wheel or use staff
+if grep '^staff:' /etc/group > /dev/null; then
+    group="staff"
+else
+    group="wheel"
+fi
+
+# Remove stale nodes
+rm -f /dev/${device}? 
+
+# Invoke insmod with all arguments we got on command line
+/sbin/insmod -f ./$module.ko $* || exit 1
+
+# Get major number after insmod is called
+major=`cat /proc/devices | awk "\\$2==\"$module\" {print \\$1}"`
+
+# Export all command line arguments
+for i in "$@"; do
+	key=`echo "$i" | cut -d "=" -sf 1`
+	value=`echo "$i" | cut -d "=" -sf 2-`
+	export $key=$value
+done
+
+# Decide the number of devices
+numdevices=3
+if [ ! -z $numminors ]; then
+numdevices=$(($numminors - 1))
+fi
+
+# Create minor devices
+for i in `seq 0 $numdevices`; do
+   mknod /dev/${device}${i} c $major ${i}
+done
+
+# Link device without minor number to minor 0
+ln -sf ${device}0  /dev/${device}
+
+# Give appropriate group/permissions to minor devices
+chgrp $group /dev/${device}[0-3]
+chmod $mode  /dev/${device}[0-3]
