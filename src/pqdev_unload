@@ -1,11 +1,11 @@
 #!/bin/sh
-module="pqdev"
-device="pqdev"
+module="memcache"
+device="memcache"
 
 # Invoke rmmod with all arguments we got on command line
 /sbin/rmmod $module $* || exit 1
 
 # Remove minor nodes (hard-coded -> it is critical because of remove)
-rm -f /dev/pqdev*
+rm -f /dev/memcache*
 
 exit 0

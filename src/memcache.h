@@ -1,5 +1,5 @@
 /* -*- C -*-
- * pqdev.h -- definitions for the pqdev char module
+ * memcache.h -- definitions for the memcache char module
  *
  * 2016 Ozgen Muzac
  * 

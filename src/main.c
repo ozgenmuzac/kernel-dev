@@ -1,13 +1,13 @@
 /**
- * main.c -- the pqdev char module
+ * main.c -- the memcache char module
  *
- * 2015 Engin Ertas
+ * 2016 Ozgen Muzac
  * 
  * The source code in this file can be freely used, adapted,
  * and redistributed in source or binary form.
  */
 
-#include "pqdev.h"
+#include "memcache.h"
 
 int memcache_major_no;
 
@@ -19,8 +19,7 @@ module_param(bufferlimit, int, 0);
 MODULE_AUTHOR("Ozgen Muzac");
 MODULE_LICENSE("GPL");
 
-struct memcache_dev *memcachedev_devices; 		/* allocated in pqdev_init */
-// struct kmem_cache *pqdev_cache;		/* create one and use it for all devices */
+struct memcache_dev *memcachedev_devices; 		/* allocated in memcache_init */
 
 /****************** File Operations ******************/
 /**
@@ -217,9 +216,8 @@ int memcache_init(void)
 	{
 		mutex_init(&memcachedev_devices[i].mutex);
 		setup_minor_cdev(memcachedev_devices + i, i);
-		int result, minor_dev_no;
-		
 	}
+	printk(KERN_INFO "Memcache Major no: %d\n", memcache_major_no);
 	
 	return 0;
 }
@@ -266,8 +264,9 @@ void setup_minor_cdev(struct memcache_dev *minor_dev, int index)
 	if (result)
 	{
 		/* Fail gracefully */
-		printk(KERN_NOTICE "Error %d adding pqdev%d", result, index);
+		printk(KERN_NOTICE "Error %d adding memcache%d", result, index);
 	}
+	printk(KERN_INFO "Minor device is introduced: %d\n", minor_dev_no);
 }
 
 

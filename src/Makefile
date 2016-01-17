@@ -3,13 +3,13 @@ OPT = -O2
 EXTRA_CFLAGS += $(OPT) -I$(LDDINC)
 
 # Set final module name
-TARGET = pqdev
+TARGET = memcache
 
 ifneq ($(KERNELRELEASE),)
 # If kernel release flag is set,
 # compiler will directly build and include object files
-pqdev-objs 	:= main.o
-obj-m		:= pqdev.o
+memcache-objs 	:= main.o
+obj-m		:= memcache.o
 
 else
 # Otherwise, show compiler where to get builders

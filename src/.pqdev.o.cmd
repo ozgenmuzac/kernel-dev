@@ -1,1 +1,0 @@
-cmd_/home/vagrant/samples/2014_kernel_projects/kernel2/src/pqdev.o := ld -m elf_x86_64   -r -o /home/vagrant/samples/2014_kernel_projects/kernel2/src/pqdev.o /home/vagrant/samples/2014_kernel_projects/kernel2/src/main.o 
