@@ -28,17 +28,17 @@ struct memcache_dev *memcachedev_devices; 		/* allocated in memcache_init */
 int memcache_open (struct inode *inode, struct file *filp)
 {
 	struct memcache_dev *dev;
-	char cache_name[] = ""; 
+	struct memcache_each_proc *ep;
 
 	/* Find the minor device */
 	dev = container_of(inode->i_cdev, struct memcache_dev, cdev);
 
 	/* Let the file pointer point to device data */
-	dev->current_index = 0;
-	dev->cache = kmalloc(sizeof(struct memcache_cache), GFP_KERNEL);
-	dev->cache->cache_name = (char*)&cache_name;
-	dev->cache->next = NULL;
-	filp->private_data = dev;
+	ep = kmalloc(sizeof(struct memcache_each_proc), GFP_KERNEL);
+	ep->dev = dev;
+	ep->current_index = 0;
+	ep->file_position = 0;
+	filp->private_data = ep;
 
 	return 0;
 }
@@ -57,11 +57,13 @@ int memcache_release (struct inode *inode, struct file *filp)
 ssize_t memcache_read (struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
 	struct memcache_dev *dev;
+	struct memcache_each_proc *ep;
 	struct memcache_cache *readed_cache;
 	size_t ret_val;
 	
 	/* Get responsible character device that is set before */
-	dev = filp->private_data;
+	ep = filp->private_data;
+	dev = ep->dev;
 
 	if (mutex_lock_interruptible(&dev->mutex))
 	{
@@ -74,8 +76,13 @@ ssize_t memcache_read (struct file *filp, char __user *buf, size_t count, loff_t
 		ret_val=-EIO;
 		goto err_mutex;
 	}
+	if(dev->cache == NULL)
+	{
+		ret_val = 0;
+		goto err_mutex;
+	} 
 
-	readed_cache = get_current_cache(dev);
+	readed_cache = get_current_cache(ep);
 	if(!readed_cache)
 	{
 		/* If there is no message available, return 0 */
@@ -113,12 +120,14 @@ err_mutex:
  */
 ssize_t memcache_write (struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
+	struct memcache_each_proc *ep;
 	struct memcache_dev *dev;
 	struct memcache_cache *cache;
-	ssize_t ret_val;
+	//ssize_t ret_val;
 
 	/* Get responsible character device that is set before */
-	dev = filp->private_data;
+	ep = filp->private_data;
+	dev = ep->dev;
 
 	if (mutex_lock_interruptible(&dev->mutex))
 	{
@@ -134,7 +143,7 @@ ssize_t memcache_write (struct file *filp, const char __user *buf, size_t count,
 
 
 	/* Alloc place for struct on heap, do not continue if it fails */
-	cache = get_current_cache(dev);
+	cache = get_current_cache(ep);
 	if(!cache)
 	{
 		mutex_unlock(&dev->mutex);
@@ -177,7 +186,105 @@ ssize_t memcache_poll (struct file *filp, const char __user *buf, size_t count,l
  */
 long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	return 0l;
+	int err = 0, ret = 0, i;
+	struct memcache_each_proc *ep;
+	struct memcache_dev *dev;
+	struct memcache_cache *cache;
+
+	if (_IOC_TYPE(cmd) != MEMCACHE_IOC_MAGIC) return -ENOTTY;
+
+	if (_IOC_NR(cmd) > MEMCACHE_IOC_MAXNR) return -ENOTTY;
+
+	if (_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+	else if (_IOC_DIR(cmd) & _IOC_WRITE)
+		err =  !access_ok(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
+	if(err)
+		return -EFAULT;
+
+	ep = filp->private_data;
+	dev = ep->dev;
+	cache = dev->cache; 
+	switch(cmd) {
+		case MEMCACHE_IOCCRESET:
+			if (mutex_lock_interruptible(&dev->mutex))
+			{
+				return -ERESTARTSYS;
+			}
+			if(cache == NULL)
+			{
+				mutex_unlock(&dev->mutex);
+				return 0;
+			}
+			for(;;) {
+				struct memcache_cache *cache_next;
+				cache_next = cache->next;
+				kfree(cache);
+				if(cache_next == NULL)
+					break;
+				cache = cache_next;
+			}
+			ep->current_index = 0;
+			dev->cache = NULL;
+			mutex_unlock(&dev->mutex);
+			break;
+		case MEMCACHE_IOCGETCACHE:
+			if (mutex_lock_interruptible(&dev->mutex))
+			{
+				return -ERESTARTSYS;
+			}
+			for(i = 0;;i++)
+			{
+				if(i == ep->current_index) {
+					printk(KERN_INFO "IN IT!!\n");
+					copy_to_user((void*)arg, (void*)cache->cache_name, strlen(cache->cache_name));
+					break;
+				}
+				cache = cache->next;
+			}
+			mutex_unlock(&dev->mutex);
+			break;
+		case MEMCACHE_IOCSETCACHE:
+			printk(KERN_INFO "Set name: %s\n", (char*)arg);
+			if (mutex_lock_interruptible(&dev->mutex))
+			{
+				return -ERESTARTSYS;
+			}
+			for(i = 0;;i++)
+			{
+				if(cache == NULL)
+				{
+					printk(KERN_INFO "Cache is adding\n");
+					cache = kmalloc(sizeof(memcache_cache), GFP_KERNEL);
+					cache->cache_name = (char*)arg;
+					cache->actual_length = 0;
+					cache->next = NULL;
+					ep->file_position = 0;
+					break;
+				}
+				else if(strcmp(cache->cache_name == (char*)arg) == 0)//cache founded
+				{
+					printk(KERN_INFO "Cache founded\n");
+					ep->current_index = i;
+					ep->file_position = 0;
+					break;
+				}
+				else
+					cache = cache->next;
+			}
+			mutex_unlock(&dev->mutex);
+			break;
+		case MEMCACHE_IOCTRUNC:
+			break;
+		case MEMCACHE_IOCQBUFSIZE:
+			break;
+		case MEMCACHE_IOCGTESTCACHE:
+			break;
+		default:
+			return -ENOTTY;
+	}
+	
+	return ret;
 }
 
 /****************** Kernel Module Operations ******************/
@@ -249,6 +356,7 @@ module_exit(memcache_exit);
 void setup_minor_cdev(struct memcache_dev *minor_dev, int index)
 {
 	int result, minor_dev_no;
+	char cache_name[] = "\0";
 
 	/* Create a minor device number */
 	minor_dev_no = MKDEV(memcache_major_no, index);
@@ -257,7 +365,8 @@ void setup_minor_cdev(struct memcache_dev *minor_dev, int index)
 	cdev_init(&minor_dev->cdev, &memcachedev_fops);
 	minor_dev->cdev.owner = THIS_MODULE;
 	minor_dev->cdev.ops = &memcachedev_fops;
-	minor_dev->current_index= 0;
+	minor_dev->cache = kmalloc(sizeof(struct memcache_cache), GFP_KERNEL);
+	minor_dev->cache->cache_name = (char*)&cache_name;
 	
 	/* Try to add minor character device into kernel */
 	result = cdev_add (&minor_dev->cdev, minor_dev_no, 1);
@@ -271,13 +380,13 @@ void setup_minor_cdev(struct memcache_dev *minor_dev, int index)
 
 
 
-struct memcache_cache * get_current_cache(struct memcache_dev *dev)
+struct memcache_cache * get_current_cache(struct memcache_each_proc *ep)
 {
 	int i;
-	struct memcache_cache *cache = dev->cache;
+	struct memcache_cache *cache = ep->dev->cache;
 	for(i = 0;cache != NULL;i++)
 	{
-		if(i == dev->current_index)
+		if(i == ep->current_index)
 			return cache;
 		else
 			cache = cache->next;

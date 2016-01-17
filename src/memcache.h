@@ -32,22 +32,29 @@ struct memcache_cache
 	struct memcache_cache *next;
 };
 
+struct memcache_each_proc
+{
+	int current_index;
+	int file_position;
+	struct memcache_dev *dev;
+};
+
 struct memcache_dev 
 {
 	struct memcache_cache *cache;
 	struct mutex mutex;
 	struct cdev cdev;
-	int current_index;
 };
 
 /********* Ioctl Definitions *********/
-#define PQDEV_IOC_MAGIC  		'Q'
-#define PQDEV_IOCRESET    		_IO(PQDEV_IOC_MAGIC, 0)
-#define PQDEV_IOCQMINPRI 		_IO(PQDEV_IOC_MAGIC, 1)
-#define PQDEV_IOCHNUMMSG 		_IO(PQDEV_IOC_MAGIC, 2)
-#define PQDEV_IOCTSETMAXMSGS 	_IO(PQDEV_IOC_MAGIC, 3)
-#define PQDEV_IOCGMINMSG 		_IOR(PQDEV_IOC_MAGIC, 4, int)
-#define PQDEV_IOC_MAXNR 		4
+#define MEMCACHE_IOC_MAGIC  		'm'
+#define MEMCACHE_IOCCRESET	    	_IO(MEMCACHE_IOC_MAGIC, 0)
+#define MEMCACHE_IOCGETCACHE    	_IOR(MEMCACHE_IOC_MAGIC, 1, int)
+#define MEMCACHE_IOCSETCACHE 		_IOW(MEMCACHE_IOC_MAGIC, 2, int)
+#define MEMCACHE_IOCTRUNC 		_IO(MEMCACHE_IOC_MAGIC, 3)
+#define MEMCACHE_IOCQBUFSIZE 		_IO(MEMCACHE_IOC_MAGIC, 4)
+#define MEMCACHE_IOCGTESTCACHE 		_IOR(MEMCACHE_IOC_MAGIC, 5, int)
+#define MEMCACHE_IOC_MAXNR 		5
 
 /********* File Operations *********/
 int memcache_open (struct inode *inode, struct file *filp);
@@ -76,4 +83,4 @@ void memcache_exit(void);
 
 
 void setup_minor_cdev(struct memcache_dev *minor_dev, int index);
-struct memcache_cache * get_current_cache(struct memcache_dev *dev);
+struct memcache_cache * get_current_cache(struct memcache_each_proc *ep);
