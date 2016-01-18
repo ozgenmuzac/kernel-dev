@@ -189,7 +189,7 @@ long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 	int err = 0, ret = 0, i;
 	struct memcache_each_proc *ep;
 	struct memcache_dev *dev;
-	struct memcache_cache *cache;
+	struct memcache_cache *cache, *new_cache;
 
 	if (_IOC_TYPE(cmd) != MEMCACHE_IOC_MAGIC) return -ENOTTY;
 
@@ -207,6 +207,7 @@ long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 	cache = dev->cache; 
 	switch(cmd) {
 		case MEMCACHE_IOCCRESET:
+			printk(KERN_INFO "Reset\n");
 			if (mutex_lock_interruptible(&dev->mutex))
 			{
 				return -ERESTARTSYS;
@@ -229,6 +230,7 @@ long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 			mutex_unlock(&dev->mutex);
 			break;
 		case MEMCACHE_IOCGETCACHE:
+			printk(KERN_INFO "Current index: %d\n", ep->current_index);
 			if (mutex_lock_interruptible(&dev->mutex))
 			{
 				return -ERESTARTSYS;
@@ -237,7 +239,7 @@ long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 			{
 				if(i == ep->current_index) {
 					printk(KERN_INFO "IN IT!!\n");
-					copy_to_user((void*)arg, (void*)cache->cache_name, strlen(cache->cache_name));
+					copy_to_user((void*)arg, (void*)cache->cache_name, strlen(cache->cache_name)+1);
 					break;
 				}
 				cache = cache->next;
@@ -252,21 +254,43 @@ long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 			}
 			for(i = 0;;i++)
 			{
-				if(cache == NULL)
+				printk(KERN_INFO "Cache name: %s\n", cache->cache_name);
+				if(strcmp(cache->cache_name, (char*)arg) == 0)//cache founded
 				{
-					printk(KERN_INFO "Cache is adding\n");
-					cache = kmalloc(sizeof(memcache_cache), GFP_KERNEL);
-					cache->cache_name = (char*)arg;
-					cache->actual_length = 0;
-					cache->next = NULL;
+					printk(KERN_INFO "Cache founded: %d\n", i);
+					ep->current_index = i;
 					ep->file_position = 0;
 					break;
 				}
-				else if(strcmp(cache->cache_name == (char*)arg) == 0)//cache founded
+				else if(cache->next == NULL)
 				{
-					printk(KERN_INFO "Cache founded\n");
-					ep->current_index = i;
+					printk(KERN_INFO "Cache is adding: %d\n", i);
+					new_cache = kmalloc(sizeof(struct memcache_cache), GFP_KERNEL);
+					strcpy(new_cache->cache_name, (char*)arg);
+					new_cache->actual_length = 0;
+					new_cache->next = NULL;
+					cache->next = new_cache;
 					ep->file_position = 0;
+					ep->current_index = i+1;
+					break;
+				}
+				
+				else
+					cache = cache->next;
+			}
+			mutex_unlock(&dev->mutex);
+			break;
+		case MEMCACHE_IOCTRUNC:
+			if (mutex_lock_interruptible(&dev->mutex))
+			{
+				return -ERESTARTSYS;
+			}
+			for(i = 0;;i++)
+			{
+				if(i == ep->current_index)
+				{
+					cache->data = NULL;
+					cache->actual_length = 0;
 					break;
 				}
 				else
@@ -274,11 +298,45 @@ long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 			}
 			mutex_unlock(&dev->mutex);
 			break;
-		case MEMCACHE_IOCTRUNC:
-			break;
 		case MEMCACHE_IOCQBUFSIZE:
+			if (mutex_lock_interruptible(&dev->mutex))
+			{
+				return -ERESTARTSYS;
+			}
+			for(i =0;;i++)
+			{
+				if(i == ep->current_index)
+				{
+					printk(KERN_INFO "Buffer size of: %s\n", cache->cache_name);
+					mutex_unlock(&dev->mutex);
+					return cache->actual_length;
+				}
+				else
+					cache = cache->next;
+			}
+			mutex_unlock(&dev->mutex);
 			break;
 		case MEMCACHE_IOCGTESTCACHE:
+			if (mutex_lock_interruptible(&dev->mutex))
+			{
+				return -ERESTARTSYS;
+			}
+			for(i = 0;;i++)
+			{
+				if(cache == NULL)
+				{
+					ret = 1;
+					break;
+				}
+				else if(strcmp(cache->cache_name, (char*)arg) == 0)
+				{
+					ret = 0;
+					break;
+				}
+				else
+					cache = cache->next;
+			}
+			mutex_unlock(&dev->mutex);
 			break;
 		default:
 			return -ENOTTY;
@@ -356,7 +414,7 @@ module_exit(memcache_exit);
 void setup_minor_cdev(struct memcache_dev *minor_dev, int index)
 {
 	int result, minor_dev_no;
-	char cache_name[] = "\0";
+	//char cache_name = "\0";
 
 	/* Create a minor device number */
 	minor_dev_no = MKDEV(memcache_major_no, index);
@@ -366,7 +424,7 @@ void setup_minor_cdev(struct memcache_dev *minor_dev, int index)
 	minor_dev->cdev.owner = THIS_MODULE;
 	minor_dev->cdev.ops = &memcachedev_fops;
 	minor_dev->cache = kmalloc(sizeof(struct memcache_cache), GFP_KERNEL);
-	minor_dev->cache->cache_name = (char*)&cache_name;
+	minor_dev->cache->cache_name[0] = '\0';
 	
 	/* Try to add minor character device into kernel */
 	result = cdev_add (&minor_dev->cdev, minor_dev_no, 1);

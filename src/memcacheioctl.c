@@ -39,6 +39,12 @@ int main() {
 	printf("minmsg: %d\n", ioctl(fd, MEMCACHE_IOCGETCACHE, (char *) &m));
 	printf("%s\n", m);
 	printf("Set: %d\n", ioctl(fd, MEMCACHE_IOCSETCACHE, "ozgen"));
+	printf("minmsg: %d\n", ioctl(fd, MEMCACHE_IOCGETCACHE, (char *) &m));
+	printf("truncate: %d\n", ioctl(fd, MEMCACHE_IOCTRUNC));
+	printf("Buffer size: %d\n", ioctl(fd, MEMCACHE_IOCQBUFSIZE));
+	printf("Is exists:: %d\n", ioctl(fd, MEMCACHE_IOCGTESTCACHE, "ozgen"));
+	printf("Is exists:: %d\n", ioctl(fd, MEMCACHE_IOCGTESTCACHE, "ibo"));
+	printf("%s\n", m);
 
 
 	/* BONUS 2:

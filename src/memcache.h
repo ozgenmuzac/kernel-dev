@@ -28,7 +28,7 @@ struct memcache_cache
 {
 	int actual_length;
 	char *data;
-	char *cache_name;
+	char cache_name[1024];
 	struct memcache_cache *next;
 };
 
