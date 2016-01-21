@@ -11,11 +11,11 @@
 
 int memcache_major_no;
 
-int numminors 		= MEMCACHE_DEVS;
 int bufferlimit		= MEMCACHE_BUFFERLIMIT;
+int numminors 		= MEMCACHE_DEVS;
 
-module_param(numminors, int, 0);
 module_param(bufferlimit, int, 0);
+module_param(numminors, int, 0);
 MODULE_AUTHOR("Ozgen Muzac");
 MODULE_LICENSE("GPL");
 
@@ -32,7 +32,10 @@ int memcache_open (struct inode *inode, struct file *filp)
 
 	/* Find the minor device */
 	dev = container_of(inode->i_cdev, struct memcache_dev, cdev);
-
+	if ( (filp->f_flags & O_ACCMODE) == O_RDONLY) 
+		dev->num_readonly += 1;
+	else
+		dev->num_write_process += 1; 
 	/* Let the file pointer point to device data */
 	ep = kmalloc(sizeof(struct memcache_each_proc), GFP_KERNEL);
 	ep->dev = dev;
@@ -48,6 +51,16 @@ int memcache_open (struct inode *inode, struct file *filp)
  */
 int memcache_release (struct inode *inode, struct file *filp)
 {
+	struct memcache_dev *dev;
+	struct memcache_each_proc *ep;
+	
+	ep = filp->private_data;
+	dev = ep->dev;
+
+	if ( (filp->f_flags & O_ACCMODE) == O_RDONLY) 
+		dev->num_readonly -= 1;
+	else
+		dev->num_write_process -= 1; 
 	return 0;
 }
 
@@ -65,17 +78,12 @@ ssize_t memcache_read (struct file *filp, char __user *buf, size_t count, loff_t
 	ep = filp->private_data;
 	dev = ep->dev;
 
-	if (mutex_lock_interruptible(&dev->mutex))
+/*	if (mutex_lock_interruptible(&dev->mutex))
 	{
 		return -ERESTARTSYS;
 	}
+*/
 
-	/* If count is smaller than size of long, do not accept it */
-	if(count < sizeof(long))
-	{
-		ret_val=-EIO;
-		goto err_mutex;
-	}
 	if(dev->cache == NULL)
 	{
 		ret_val = 0;
@@ -90,28 +98,29 @@ ssize_t memcache_read (struct file *filp, char __user *buf, size_t count, loff_t
 		goto err_mutex;
 	}
 
-	/*If the actual length is shorter than read value, shorten the length again */
-	if(readed_cache->actual_length < count)
+	if(readed_cache->actual_length <= ep->file_position)
 	{
-		count = readed_cache->actual_length;
+		ret_val = 0;
+		goto err_mutex;
 	}
-	
-	if (copy_to_user (buf, readed_cache->data, count)) 
+
+	/*If the actual length is shorter than read value, shorten the length again */
+	if(readed_cache->actual_length < (ep->file_position + count))
+	{
+		count = readed_cache->actual_length - ep->file_position;
+	}
+	printk(KERN_INFO "Copy to user count: %d\n", count);	
+	if (copy_to_user (buf, readed_cache->data+ep->file_position, count)) 
 	{
 		ret_val=-EFAULT;
-		goto err_clear;
+		goto err_mutex;
 	}
 
 	/* If all checks are passed, return count as readed bytes */
 	ret_val = count;
 
-	/* Deallocate resources and unlock mutex */
-err_clear:
-	kfree(readed_cache->data);
-	kfree(readed_cache);
-
 err_mutex:
-	mutex_unlock(&dev->mutex);
+	//mutex_unlock(&dev->mutex);
 	return ret_val;
 }
 
@@ -129,47 +138,114 @@ ssize_t memcache_write (struct file *filp, const char __user *buf, size_t count,
 	ep = filp->private_data;
 	dev = ep->dev;
 
-	if (mutex_lock_interruptible(&dev->mutex))
+	/*if (mutex_lock_interruptible(&dev->mutex))
 	{
 		return -ERESTARTSYS;
-	}	
+	}*/	
 
 
 	/* If the message is longer than the max. length, truncate the message */
-	if(count > bufferlimit)
+	if(ep->file_position + count > bufferlimit)
 	{
-		count = bufferlimit;
+		count = bufferlimit - ep->file_position;
 	}
 
-
-	/* Alloc place for struct on heap, do not continue if it fails */
 	cache = get_current_cache(ep);
+	printk(KERN_INFO "Cache name write: %s\n", cache->cache_name);
+	if(&cache->mutex == NULL) {
+		printk(KERN_INFO "Cache mutex null!");
+	}
+	if (mutex_lock_interruptible(&(cache->mutex)))
+	{
+		return -ERESTARTSYS;
+	}	
+	printk(KERN_INFO "Write Count: %d\n", count);
 	if(!cache)
 	{
-		mutex_unlock(&dev->mutex);
+		mutex_unlock(&cache->mutex);
 		return -ENOMEM;
 	}
 
-	/* Alloc place for message data. If fails, do not forget to deallocate heap! */
-	cache->data = kmalloc(count, GFP_KERNEL);
 	if(!cache->data)
 	{
-		mutex_unlock(&dev->mutex);
-		return -ENOMEM;
+		cache->data = kmalloc(bufferlimit, GFP_KERNEL);
 	}
 
-	/* If prio value is not fetched, do not forget to deallocate data and heap! */
-	if (copy_from_user (cache->data, buf, count)) 
+	if((ep->file_position + count) > bufferlimit)
 	{
-		mutex_unlock(&dev->mutex);
+		mutex_unlock(&cache->mutex);
+		return -EFBIG;
+	}
+	printk(KERN_INFO "Data before copy: %s\n", cache->data);	
+	if (copy_from_user (cache->data+ep->file_position, buf, count)) 
+	{
+		mutex_unlock(&cache->mutex);
 		kfree(cache->data);	
 		return -EIO;
 	}
-	cache->actual_length = count;
+	cache->actual_length = ep->file_position + count;
+	ep->file_position += count;
+	printk(KERN_INFO "Write data: %s\n", cache->data);
+	printk(KERN_INFO "Actual length: %d\n", cache->actual_length);
+	printk(KERN_INFO "EP file position: %d\n", ep->file_position);
 
 	/* Unlock mutex and return the result */
-	mutex_unlock(&dev->mutex);
+	mutex_unlock(&cache->mutex);
 	return count;
+}
+
+
+loff_t memcache_llseek (struct file *filp, loff_t off, int whence)
+{
+	struct memcache_each_proc *ep;
+	struct memcache_dev *dev;
+	struct memcache_cache *cache;
+	int maxoffset = 0;
+	//ssize_t ret_val;
+
+	/* Get responsible character device that is set before */
+	ep = filp->private_data;
+	dev = ep->dev;
+	cache = get_current_cache(ep);
+
+	if (mutex_lock_interruptible(&dev->mutex))
+	{
+		return -ERESTARTSYS;
+	}
+	if((filp->f_flags & O_ACCMODE) == O_RDONLY)
+		maxoffset = cache->actual_length;
+	else
+		maxoffset = bufferlimit;
+	switch(whence) {
+        	case 0: /* SEEK_SET */
+			if(off > maxoffset)	
+				ep->file_position = maxoffset;
+			else
+				ep->file_position = off;
+                	break;
+
+		case 1: /* SEEK_CUR */
+			if((ep->file_position + off) > maxoffset)
+				ep->file_position = maxoffset;
+			else
+				ep->file_position += off;
+			break;
+
+		case 2: /* SEEK_END */
+			if((bufferlimit + off) > maxoffset)
+				ep->file_position = maxoffset;
+			else
+				ep->file_position = bufferlimit + off;
+			break;
+
+		default: /* can't happen */
+			return -EINVAL;
+        }
+        if (ep->file_position < 0) return -EINVAL;
+        filp->f_pos = ep->file_position;
+	printk(KERN_INFO "File position after seek: %d\n", ep->file_position);
+	mutex_unlock(&dev->mutex);
+        return ep->file_position;
 }
 
 /**
@@ -238,7 +314,6 @@ long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 			for(i = 0;;i++)
 			{
 				if(i == ep->current_index) {
-					printk(KERN_INFO "IN IT!!\n");
 					copy_to_user((void*)arg, (void*)cache->cache_name, strlen(cache->cache_name)+1);
 					break;
 				}
@@ -269,6 +344,7 @@ long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 					strcpy(new_cache->cache_name, (char*)arg);
 					new_cache->actual_length = 0;
 					new_cache->next = NULL;
+					mutex_init(&(new_cache->mutex));
 					cache->next = new_cache;
 					ep->file_position = 0;
 					ep->current_index = i+1;
@@ -425,6 +501,9 @@ void setup_minor_cdev(struct memcache_dev *minor_dev, int index)
 	minor_dev->cdev.ops = &memcachedev_fops;
 	minor_dev->cache = kmalloc(sizeof(struct memcache_cache), GFP_KERNEL);
 	minor_dev->cache->cache_name[0] = '\0';
+	minor_dev->num_readonly = 0;
+	minor_dev->num_write_process = 0;
+	mutex_init(&(minor_dev->cache->mutex));
 	
 	/* Try to add minor character device into kernel */
 	result = cdev_add (&minor_dev->cdev, minor_dev_no, 1);

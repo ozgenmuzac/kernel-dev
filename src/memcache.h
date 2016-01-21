@@ -17,6 +17,7 @@
 #include <linux/errno.h>		/* error codes */
 #include <linux/types.h>		/* size_t */
 #include <asm/uaccess.h>
+#include <linux/fcntl.h>        /* O_ACCMODE */
 
 #define MEMCACHE_NAME		"memcache"
 
@@ -29,6 +30,7 @@ struct memcache_cache
 	int actual_length;
 	char *data;
 	char cache_name[1024];
+	struct mutex mutex;
 	struct memcache_cache *next;
 };
 
@@ -42,6 +44,8 @@ struct memcache_each_proc
 struct memcache_dev 
 {
 	struct memcache_cache *cache;
+	int num_readonly; 
+	int num_write_process;
 	struct mutex mutex;
 	struct cdev cdev;
 };
@@ -63,6 +67,7 @@ ssize_t memcache_read (struct file *filp, char __user *buf, size_t count,loff_t 
 ssize_t memcache_write (struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
 ssize_t memcache_poll (struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
 long memcache_ioctl (struct file *filp, unsigned int cmd, unsigned long arg);
+loff_t memcache_llseek (struct file *filp, loff_t off, int whence);
 
 struct file_operations memcachedev_fops = 
 {
@@ -72,6 +77,7 @@ struct file_operations memcachedev_fops =
 	.unlocked_ioctl 	= memcache_ioctl,
 	.open 			= memcache_open,
 	.release 		= memcache_release,
+	.llseek			= memcache_llseek,
 	.poll 			= memcache_poll
 };
 
